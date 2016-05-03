@@ -36,14 +36,14 @@ def jq_param_w2p(str_or_buffer, rewind = True):
 
     """
 
+    if not str_or_buffer:
+        return Storage()
 
     class State:
         def __init__(self, **kwargs):
             for k, v in kwargs.items():
                 self.__dict__[k]=v
 
-    if not str_or_buffer:
-        return Storage()
     is_num_or_none = re.compile('^(\d)*$', re.I )
     def get_obj_fun(first_key):
         def _add_dict_(obj, k, v):
