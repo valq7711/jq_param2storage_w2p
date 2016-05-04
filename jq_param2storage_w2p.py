@@ -101,7 +101,7 @@ def jq_param_w2p(str_or_buffer, rewind = True):
                 raise RuntimeError('Can`t parse jq_param ')
         else:
             ret[var[0]]= v if not v.isdigit() else long(v)
-        st.cur_i+= 1
+            st.cur_i+= 1
 
     if rewind and not is_string:
         str_or_buffer.seek(0)
