@@ -1,6 +1,6 @@
 ## jq_param2storage_w2p
 As of jQuery 1.8, the `$.param()` method no longer uses `jQuery.ajaxSettings.traditional` as its default setting and will default to false.
-So, `$.param()` returns string that is structured like:
+So, `$.param()` returns a string that is structured like:
 <pre><code>        cmd=get-records
         &limit= 50
         &offset= 0
