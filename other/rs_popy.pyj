@@ -1,0 +1,493 @@
+#---------------------------    ----------------------------------------------------
+# Name:        module1
+# Purpose:
+#
+# Author:      Val
+#
+# Created:     07.02.2016
+# Copyright:   (c) Val 2016
+# Licence:     <your licence>
+#-------------------------------------------------------------------------------
+
+
+def fa(fa, i_style= ''): 
+    ret = '<i class="fa '+ fa + \
+            '" style="'+ i_style+ '" ></i>'
+    return ret
+
+
+class Store:
+    def __init__(self, data=None):
+        if data:
+            keys = Object.keys(data)
+            $.extend(True, self, {k:data[k] for k in keys})
+    
+    def update(self, upd):
+            $.extend(self, upd) # NOT deep copy, as in Python
+    
+    def copy(self):
+        return Store(self)
+    
+    def pop(self, k, alt = undefined):
+        ret =  self[k] or alt
+        del self[k]
+        return ret
+    
+    def keys(self):
+        return Object.keys(self)
+
+    def json_keys(self):
+        return JSON.stringify(self.keys())
+    
+    def json(self):
+        return JSON.stringify(self)
+
+
+
+class Object_holder:
+
+    def __init__(self, obj_data, name = None):
+        
+        if name:
+            self.name = name
+        #self.app = app
+        self.data = obj_data
+        self.obj = None
+    
+    def _creator(self):
+        creators = {}
+        #JSON
+        creators.json = def (data):
+            obj_init =  eval(data.obj_init)
+            init_args = data.init_args
+            self.obj =  data.new and (new obj_init(init_args, self)) \
+                                 or (obj_init(init_args, self))
+                                 
+            return self.obj
+        
+        #HTML    
+        creators.html = def (data):
+            self.obj = data
+            #$dfd = $.Deferred()
+            #$dfd.promise(self.obj)
+            #$dfd.resolve(self.obj)
+            return self.obj
+            
+        return creators[self.data.type]
+
+    def load_only(self):
+        obj_data = self.data
+        if obj_data.method: # ajax request
+            ajax_set = {}
+            ajax_set.method = obj_data.method # GET or POST - chachable or not
+            ajax_set.dataType = obj_data.type 
+            ajax_set.url = obj_data.url
+            if obj_data.post_data:
+                ajax_set.data = obj_data.post_data
+            return $.ajax(ajax_set)
+        else:
+            return $.when(obj_data.content)
+            
+    def load(self):
+        $dfd = $.Deferred()
+        $dfd.promise(self) 
+        do_resolve =  def (): 
+                        $dfd.resolve(self.obj)
+                        
+        do_reject =  def (): 
+                        $dfd.reject(self, arguments) 
+        if self.obj and self.data.refresh == 'static':
+            do_resolve()
+            return self
+        
+        obj_data = self.data
+        if obj_data.method: # ajax request
+            ajax_set = {}
+            ajax_set.method = obj_data.method # GET or POST - chachable or not
+            ajax_set.dataType = obj_data.type 
+            ajax_set.url = obj_data.url
+            if obj_data.post_data:
+                ajax_set.data = obj_data.post_data
+            creator = self._creator()
+            #$.ajax(ajax_set).done(creator) \
+            #                .done( def (): $dfd.resolve(self.obj); ) \
+            #                .fail(def (): $dfd.reject(self.obj);)
+            
+            
+            $.ajax(ajax_set) \
+                .done(def (data): 
+                            $.when(creator(data)) \
+                                .done(do_resolve) \
+                                .fail(do_reject) 
+                     ) \
+                .fail(do_reject)
+        else:  
+            creator = self._creator()
+            $.when(creator(obj_data.content)) \
+                .done(do_resolve) \
+                .fail(do_reject) 
+        return self
+        
+        
+class Page:
+    def __init__(self, app, pg_data, name):
+        self.data = pg_data
+        self.name = name
+        self.app = app
+        
+    def show(self):
+        app = self.app
+        for pnl_type in app.panel_types:
+            pnl_data= self.data.panels[pnl_type]
+            if pnl_data:
+                self.set_panel(pnl_type, pnl_data)
+            else:
+                app.layout.hide(pnl_type)
+        app.current_page = self
+        
+    def set_panel(self, pnl_type, pnl_data):
+        #panel_name = self.name + '_' + pnl_type
+        app = self.app
+        set_on_done = def (obj): 
+                        app.current_panel = {  'type':  pnl_type, 
+                                               'data':  pnl_data,
+                                                'obj':  obj 
+                                            }
+                        
+                        onComplete = def ():
+                                        f= app.all_panels_script[pnl_data.name]
+                                        if f:
+                                            f(self)
+                                        if  pnl_data.name[-7:]=='nav_bar':
+                                            obj.onClick = def(e): app.nav_handler(e);
+                                            obj.select(self.name)
+                                            obj.expandParents(self.name)
+                                        app.layout.unlock(pnl_type)    
+                        app.layout.content(pnl_type, obj)
+                        onComplete()
+                        
+        
+        panel_holder = app.panel_holder(pnl_data)
+        app.layout.lock(pnl_type,'',True)
+        
+        set_on_fail = def(obj_holder, ajax_ret):
+                    app.layout.content(pnl_type, ajax_ret[0].responseText)
+                    app.layout.unlock(pnl_type)    
+                    
+        
+        if not (self is app.current_page):
+            cur_panel =  app.current_page and app.current_page.data.panels[pnl_type] or None
+            cur_panel_holder =  cur_panel and cur_panel.name and  app.all_panels[cur_panel.name] 
+            if panel_holder is cur_panel_holder:
+                if  app.layout.get(pnl_type).hidden:
+                    if panel_holder.data.panel_opt:
+                        self.process_panel_opt(pnl_type, panel_holder)
+                    app.layout.show(pnl_type)    
+            else:
+                if panel_holder.data.panel_opt:
+                    self.process_panel_opt(pnl_type, panel_holder)
+                app.layout.show(pnl_type)    
+        panel_holder.load().done(set_on_done).fail(set_on_fail)
+        #if not panel_holder.obj:
+        #    panel_holder.load().done(set_on_done)
+        #else:
+        #    set_on_done(panel_holder.obj)
+        
+    def process_panel_opt(self, pnl_type, panel_holder):
+        app = self.app
+        panel_opt = panel_holder.data.panel_opt
+        if  panel_opt:
+            if panel_opt.toolbar and not w2ui[panel_opt.toolbar.name]:
+                panel_opt.toolbar = $().w2toolbar(panel_opt.toolbar)
+                panel_opt.toolbar.onClick = def (e): app.toolbar_handler(e);
+            #w2_panel = app.layout.get(pnl_type)
+            #$.extend(True, w2_panel, panel_opt)
+            app.layout.set(pnl_type, panel_opt)
+    
+class W2ui_App:
+    
+    def __init__(self, w2ui_app_layout):
+        self.panel_types = ['top', 'left', 'right', 'bottom', 'preview', 'main']
+        self.pages = {}
+        self.all_panels = {} 
+        self.all_panels_script = {}
+        
+        self.pages_data = w2ui_app_layout.pages_data
+        box = w2ui_app_layout.box
+        name = w2ui_app_layout.name
+        $('#'+box).w2layout(w2ui_app_layout)
+        self.layout = w2ui[name]
+        start_page = w2ui_app_layout.start_page
+        pg = self.pages[start_page] = Page(self, self.pages_data[start_page], start_page)
+        pg.show()
+        
+
+    def panel_holder(self, pnl_data):
+        name = pnl_data.name
+        if name not in self.all_panels:
+            c_pnl_data =  self.layout.common_panels[name]
+            if c_pnl_data:
+                pnl_data = c_pnl_data
+            panel_holder = self.all_panels[name] = Object_holder(pnl_data, name)
+        else:
+            panel_holder = self.all_panels[name]
+        return  panel_holder
+
+
+    def toolbar_handler(self, e):
+        data = e.object.data
+        #print(data)
+        if data:
+            data = $.isArray(data) and data or [data]
+            q = def(o): 
+                    ret = def (): 
+                                Object_holder(o).load().always( def(): $(document).dequeue('ajax');)
+                    return ret
+            for d in data:
+                $(document).queue('ajax', q(d))
+            $(document).dequeue('ajax')
+            
+        
+    def  nav_handler(self, e):
+        node_obj = e.object
+        #print(e.object) 
+        #print('self',self) 
+        if node_obj.route: #go to href
+            return 
+        #else  - set panels
+        
+        pg_name = node_obj.pg_name
+        if not  pg_name:
+            return
+        pg = self.pages[pg_name]
+        if not pg:
+            pg = self.pages[pg_name] = Page(self, self.pages_data[pg_name], pg_name)
+        pg.show()
+
+    def panel_script(self, fun):
+        #fun()  - set context and return function(page) 
+        self.all_panels_script[self.current_panel.data.name] = fun(self.current_panel)
+
+        
+        
+
+
+class FlyForm:
+    forms_opened={};
+    
+    @staticmethod    
+    def close(w2form_name, destroy=False):
+        obj = FlyForm.prototype.forms_opened[w2form_name] 
+        if obj:
+            $('#'+obj.id).remove()
+            if destroy and w2ui[w2form_name]:
+                w2ui[w2form_name].destroy()
+            del FlyForm.prototype.forms_opened[w2form_name]
+        #del obj
+    
+    @staticmethod    
+    def close_all(destroy=False):
+        all_frms = FlyForm.prototype.forms_opened
+        for f in all_frms:
+            $('#'+all_frms[f].id).remove()
+            if destroy and w2ui[f]:
+                w2ui[f].destroy()
+            del all_frms[f]
+        #del obj
+    
+    
+    @staticmethod
+    def left_top_correct_WH(options):
+        if not window.innerHeight:
+                maxW  = int(document.documentElement.offsetWidth)
+                maxH = int(document.documentElement.offsetHeight)
+        else:
+            maxW  = int(window.innerWidth)
+            maxH = int(window.innerHeight)
+        
+        if maxW  - 10 < options.width: options.width  = maxW  - 10
+        if maxH - 10 < options.height: options.height = maxH - 10
+        top  = (maxH - options.height) / 2 * 0.6
+        left = (maxW - options.width) / 2
+        return [left, top]
+    
+    
+    def refresh_form(self):
+        self.frm_obj.lock('Обновление', True)
+        print('refresh_form...')
+        on_done = def(data):
+                print(data.init_args.w2form)
+                print(self.frm_obj)
+                $.extend(True, self.frm_obj.postData, data.init_args.w2form.postData)
+                print(self.frm_obj)
+                self.frm_obj.refresh()
+                self.frm_obj.unlock()
+        self.obj_holder.load_only()\
+            .done(on_done)\
+            .fail(def(): self.frm_obj.lock('Server Error',True);)
+    
+    def refresh_form_light(self, data):
+        if data:
+            $.extend(True, self.frm_obj.postData, data.postData)
+            $.extend(True, self.frm_obj.record, data.record)
+            self.frm_obj.refresh()
+    
+    @staticmethod
+    def OK_msg(msg):
+        ret = '<div class="popy-OK_msg">'+ fa('fa-check') + ' ' + \
+                (msg or 'Все получилось!') + '</div>'
+        return  ret
+    
+    def err_msg(msg):
+        ret = '<div class="popy-err_msg">'+ fa('fa-times') +' '+ \
+                (msg or 'Что-то не получилось!') + '</div>'
+        return  ret
+        
+        
+    def __init__(self, args, obj_holder):
+        w2form = args.w2form
+        options = args.options or None
+        self.obj_holder = obj_holder
+        if type(w2form)=='string':
+            w2form_name = w2form
+            FlyForm.close(w2form_name)
+            frm_obj = self.frm_obj = w2ui[w2form_name]
+        else: 
+            w2form_name = w2form.name
+            if w2form.actions == 'default':
+                w2form.actions = {}
+                w2form.actions.Reset = def(): this.clear();
+                w2form.actions.OK = def(): 
+                                        w2popup.close()
+                                        on_OK= def(data): 
+                                                on_confirm = None
+                                                if w2form_name == 'login':
+                                                    data.record.password ='' 
+                                                    on_confirm = def():
+                                                                    print(data)
+                                                                    if data.next:
+                                                                        window.location = data.next
+                                                                    else:     
+                                                                        location.reload()
+                                                self.refresh_form_light(data)
+                                                w2alert(FlyForm.OK_msg(data.message), None, on_confirm)
+                                                if self.frm_obj.on_OK_close:
+                                                    FlyForm.close(w2form_name, self.frm_obj.on_close_destroy)
+
+                                        self.frm_obj.save(on_OK)
+                                        
+                w2form.onError = def(e):
+                                    data = $.parseJSON(e.xhr.responseText)
+                                    w2alert(FlyForm.err_msg(data.message) , 'Ошибка');
+                                    e.preventDefault();
+                                    if w2form_name == 'login':
+                                        data.record.password ='' 
+                                    self.refresh_form_light(data) 
+                                    #e.onComplete = def(): self.refresh_form_light(data) ;
+                                    #w2alert(msg, 'Error');
+                #w2form.onSave = 
+            FlyForm.close(w2form_name)
+            frm_obj =  w2ui[w2form_name]
+            if  frm_obj: # update form data 
+                $.extend(True, frm_obj, w2form)
+                frm_obj.refresh()
+            else:
+                frm_obj =  $().w2form(w2form)
+            self.frm_obj = frm_obj
+                
+        if not options:
+               options={
+                'title'     : '',
+                'body'      : '',
+                'buttons'   : '',
+                'style'     : '',
+                'opacity'   : 0.4,
+                'speed'    : 0.3,
+                'modal'     : False,
+                'width'     : 500,
+                'height'    : 300,
+                'showClose' : True,
+                'transition': None
+                }
+        
+
+        id = self.id = w2form_name+'_fly'
+        options.title = frm_obj.header
+        
+        #below changes options.width/height
+        left, top = FlyForm.left_top_correct_WH(options) 
+        
+        $btn = $('<div class="w2ui-msg-button w2ui-msg-close">Close</div>')\
+                .mousedown(def (e): e.stopPropagation();) \
+                .click(def (): $.FlyForm.close(w2form_name );)
+        $main = $('<div class="w2ui-popup" style="transform: scale(0.8); transition: transform 0.5s;  opacity: 1;"></div>') \
+                .css({  'left': left,
+                        'top': top,
+                        'width': int(options.width), 
+                        'height': int(options.height), }
+                    ) \
+        $main[0].id = id            
+        $('body').append($main)
+        $msg = $('<div class="w2ui-msg-title"></div>'+ \
+                 '<div class="w2ui-box1" style=" bottom: 0px !important;" >'+ \
+                 '      <div class="w2ui-msg-body"></div>'+ \
+                 '</div>')
+        $($msg[0]).append($btn, options.title)
+        $msg.find('div.w2ui-msg-body').attr('style', options.style)
+        
+            #'<input class="w2ui-popup-hidden" style="position: absolute; top: -100px"/>'; // this is needed to keep focus in popup
+        $main.html($msg)
+        
+        $main.draggable()
+        submit_on_enter = def(e):
+            if self.frm_obj.submit_on_enter and e.keyCode == 13 and e.target.type!='textarea' :
+                #if not self.frm_obj.validate()[0]: #.validate() returns errors!
+                self.frm_obj.actions.OK()
+                e.preventDefault()
+        $main.on('keypress', submit_on_enter)
+        #FlyForm.prototype.forms_opened[w2form_name] = self
+        self.forms_opened[w2form_name] = self
+        frm_obj.header = ''
+        $main.find('div.w2ui-msg-body').w2render(w2form_name)
+        $main.css('transform','scale(1)')
+        $main.find('button[name="OK"]').addClass('btn-green')
+        $main.find('button[name="Reset"]')[0].style.color="#CC0000"
+        frm_obj.header = options.title 
+        
+    
+class Obj_Tst:
+    def __init__(self, args):
+        self.cont = args.content
+        self.box = None
+        self.onComplete = None
+        
+        #must be done allways - see load()
+        #$dfd = $.Deferred()
+        #$dfd.promise(self)
+        #$dfd.resolve(self)
+    
+    def render(self, box=None):
+        box = box or self.box
+        $(box).html(self.cont)
+        if self.onComplete:
+            self.onComplete()
+            
+    
+            
+    
+def main():
+    pass
+    #d = tst_widget('hello from RS1')
+    #$('body').append(d.$cont)
+    #global ff
+    $.Obj_Tst = Obj_Tst
+    $.w2ui_app = W2ui_App
+    $.obj_h = Object_holder
+    $.FlyForm=FlyForm
+    $.Store= Store
+    $.ajaxSetup({beforeSend: def(xhr, settings): 
+                        xhr.setRequestHeader('web2py-component-location', document.location);
+                })  
+    
+$(document).ready(main)
+
