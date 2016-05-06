@@ -62,7 +62,14 @@ class Object_holder:
             init_args = data.init_args
             self.obj =  data.new and (new obj_init(init_args, self)) \
                                  or (obj_init(init_args, self))
-                                 
+            
+            if data.callback and data.callback.obj_init:
+                callback = def (obj):
+                    call_back = eval(data.callback.obj_init)
+                    call_back_args = data.callback.init_args
+                    tmp = data.callback.new and (new call_back(call_back_args, obj, self)) \
+                                      or (call_back(call_back_args, obj, self))
+                $.when(self.obj).done(callback)
             return self.obj
         
         #HTML    
@@ -91,13 +98,16 @@ class Object_holder:
     def load(self):
         $dfd = $.Deferred()
         $dfd.promise(self) 
-        do_resolve =  def (): 
-                        $dfd.resolve(self.obj)
+        do_resolve =  def(obj): 
+                        $dfd.resolve(obj)
                         
-        do_reject =  def (): 
+        do_reject =  def(): 
                         $dfd.reject(self, arguments) 
         if self.obj and self.data.refresh == 'static':
-            do_resolve()
+            if self.obj.resolve and self.obj.done:
+                self.obj.done(do_resolve)
+            else:   
+                do_resolve(self.obj)
             return self
         
         obj_data = self.data
@@ -125,7 +135,7 @@ class Object_holder:
             creator = self._creator()
             $.when(creator(obj_data.content)) \
                 .done(do_resolve) \
-                .fail(do_reject) 
+                .fail(do_reject)
         return self
         
         
@@ -211,6 +221,7 @@ class W2ui_App:
         self.pages = {}
         self.all_panels = {} 
         self.all_panels_script = {}
+        self.Grid = Grid
         
         self.pages_data = w2ui_app_layout.pages_data
         box = w2ui_app_layout.box
@@ -269,7 +280,41 @@ class W2ui_App:
         self.all_panels_script[self.current_panel.data.name] = fun(self.current_panel)
 
         
+class Grid:        
+    def __init__(self, args, obj_holder):
+        w2grid  = args.w2grid
         
+        #onAdd
+        if w2grid._onAdd: # must contain FlyForm args: {w2form, options}
+            #onAdd = $.extend(True, {}, w2grid.onAdd) 
+            w2grid.onAdd =  (def():
+                                onAdd = w2grid._onAdd #!important save reference, because reassign w2grid.onAdd
+                                on_success = onAdd.w2form.on_success = onAdd.w2form.on_success or []
+                                on_success.push(def(): self.grid_obj.reload();)    
+                                return  def():
+                                    obj = new FlyForm(onAdd, self)
+                                    obj.frm_obj.clear()
+
+
+                            )()
+
+
+        #onEdit
+        if w2grid._onEdit: # must contain FlyForm args: {w2form, options}
+            #onAdd = $.extend(True, {}, w2grid.onAdd) 
+            w2grid.onEdit =  (def():
+                                onEdit = w2grid._onEdit #!important save reference, because reassign w2grid.onAdd
+                                on_success = onEdit.w2form.on_success = onEdit.w2form.on_success or []
+                                on_success.push(def(): self.grid_obj.reload();)    
+                                return  def(e):
+                                    #record =  self.grid_obj.get(e.recid)
+                                    onEdit.w2form.record = self.grid_obj.get(e.recid) 
+                                    new FlyForm(onEdit, self)
+                            )()
+
+        self.grid_obj = $().w2grid(w2grid)
+        
+
 
 
 class FlyForm:
@@ -316,10 +361,7 @@ class FlyForm:
         self.frm_obj.lock('Обновление', True)
         print('refresh_form...')
         on_done = def(data):
-                print(data.init_args.w2form)
-                print(self.frm_obj)
                 $.extend(True, self.frm_obj.postData, data.init_args.w2form.postData)
-                print(self.frm_obj)
                 self.frm_obj.refresh()
                 self.frm_obj.unlock()
         self.obj_holder.load_only()\
@@ -342,61 +384,18 @@ class FlyForm:
         ret = '<div class="popy-err_msg">'+ fa('fa-times') +' '+ \
                 (msg or 'Что-то не получилось!') + '</div>'
         return  ret
-        
+    
+
+    def set_disabled(self, e):  
+        e.onComplete = def(): 
+                    for fld in self.frm_obj.fields:
+                        fld.el.disabled = fld.writable == False
+                        if fld.name == 'id':
+                            fld.el.disabled = not (fld.writable == True)
+
         
     def __init__(self, args, obj_holder):
-        w2form = args.w2form
-        options = args.options or None
-        self.obj_holder = obj_holder
-        if type(w2form)=='string':
-            w2form_name = w2form
-            FlyForm.close(w2form_name)
-            frm_obj = self.frm_obj = w2ui[w2form_name]
-        else: 
-            w2form_name = w2form.name
-            if w2form.actions == 'default':
-                w2form.actions = {}
-                w2form.actions.Reset = def(): this.clear();
-                w2form.actions.OK = def(): 
-                                        w2popup.close()
-                                        on_OK= def(data): 
-                                                on_confirm = None
-                                                if w2form_name == 'login':
-                                                    data.record.password ='' 
-                                                    on_confirm = def():
-                                                                    print(data)
-                                                                    if data.next:
-                                                                        window.location = data.next
-                                                                    else:     
-                                                                        location.reload()
-                                                self.refresh_form_light(data)
-                                                w2alert(FlyForm.OK_msg(data.message), None, on_confirm)
-                                                if self.frm_obj.on_OK_close:
-                                                    FlyForm.close(w2form_name, self.frm_obj.on_close_destroy)
-
-                                        self.frm_obj.save(on_OK)
-                                        
-                w2form.onError = def(e):
-                                    data = $.parseJSON(e.xhr.responseText)
-                                    w2alert(FlyForm.err_msg(data.message) , 'Ошибка');
-                                    e.preventDefault();
-                                    if w2form_name == 'login':
-                                        data.record.password ='' 
-                                    self.refresh_form_light(data) 
-                                    #e.onComplete = def(): self.refresh_form_light(data) ;
-                                    #w2alert(msg, 'Error');
-                #w2form.onSave = 
-            FlyForm.close(w2form_name)
-            frm_obj =  w2ui[w2form_name]
-            if  frm_obj: # update form data 
-                $.extend(True, frm_obj, w2form)
-                frm_obj.refresh()
-            else:
-                frm_obj =  $().w2form(w2form)
-            self.frm_obj = frm_obj
-                
-        if not options:
-               options={
+        self.default_options ={
                 'title'     : '',
                 'body'      : '',
                 'buttons'   : '',
@@ -410,11 +409,71 @@ class FlyForm:
                 'transition': None
                 }
         
+        def_options = $.extend(True, {}, self.default_options)
+        options =  args.options and $.extend(True, def_options, args.options) or def_options
+        
+        w2form = args.w2form
+        
+        self.obj_holder = obj_holder
+        if type(w2form)=='string':
+            w2form_name = w2form
+            FlyForm.close(w2form_name)
+            frm_obj = self.frm_obj = w2ui[w2form_name]
+        else: 
+            w2form_name = w2form.name
+            w2form.on_success= w2form.on_success or []
+            w2form.onRefresh = def(e): self.set_disabled(e);
+            if w2form.actions == 'default':
+                w2form.actions = {}
+                w2form.actions.Reset = def(): this.clear();
+                w2form.actions.OK = def(): 
+                                        w2popup.close()
+                                        on_OK= def(data): 
+                                                on_confirm = None
+                                                if w2form_name == 'login':
+                                                    data.record.password ='' 
+                                                    on_confirm = def():
+                                                                    if data.next:
+                                                                        window.location = data.next
+                                                                    else:     
+                                                                        location.reload()
+                                                self.refresh_form_light(data)
+                                                w2alert(FlyForm.OK_msg(data.message), None, on_confirm)
+                                                if self.frm_obj.on_OK_close:
+                                                    FlyForm.close(w2form_name, self.frm_obj.on_close_destroy)
+
+                                                #execute callbacks
+                                                for fun in w2form.on_success:
+                                                    fun  =  type(fun)=='string' and eval(fun) or fun
+                                                    fun(data)
+
+                                        self.frm_obj.save(on_OK)
+                                        
+            w2form.onError = def(e):
+                                    data = $.parseJSON(e.xhr.responseText)
+                                    w2alert(FlyForm.err_msg(data.message) , 'Ошибка');
+                                    e.preventDefault();
+                                    if w2form_name == 'login':
+                                        data.record.password ='' 
+                                    self.refresh_form_light(data) 
+                                    #e.onComplete = def(): self.refresh_form_light(data) ;
+                                    #w2alert(msg, 'Error');
+                #w2form.onSave = 
+            FlyForm.close(w2form_name)
+            frm_obj =  w2ui[w2form_name]
+            if  frm_obj: # update form data 
+                $.extend(True, frm_obj, w2form)
+            else:
+                frm_obj =  $().w2form(w2form)
+            self.frm_obj = frm_obj # !important assign self.frm_obj before refresh
+            
+        
 
         id = self.id = w2form_name+'_fly'
         options.title = frm_obj.header
         
         #below changes options.width/height
+
         left, top = FlyForm.left_top_correct_WH(options) 
         
         $btn = $('<div class="w2ui-msg-button w2ui-msg-close">Close</div>')\
@@ -448,11 +507,12 @@ class FlyForm:
         #FlyForm.prototype.forms_opened[w2form_name] = self
         self.forms_opened[w2form_name] = self
         frm_obj.header = ''
-        $main.find('div.w2ui-msg-body').w2render(w2form_name)
         $main.css('transform','scale(1)')
+        $main.find('div.w2ui-msg-body').w2render(w2form_name)
         $main.find('button[name="OK"]').addClass('btn-green')
         $main.find('button[name="Reset"]')[0].style.color="#CC0000"
         frm_obj.header = options.title 
+        #frm_obj.resize()
         
     
 class Obj_Tst:
